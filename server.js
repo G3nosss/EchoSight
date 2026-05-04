@@ -45,7 +45,7 @@ const CONFIG = {
   mockSonarFile: path.join(__dirname, "data", "mock_sonar.wav"),
 
   // Inference mode: 'pytorch' | 'onnx' | 'passthrough' (echo spec without ML)
-  inferenceMode: "passthrough",
+  inferenceMode: "onnx",
 
   // Scan interval for continuous "live" mode (ms). 0 = manual only.
   autoScanInterval: 0,
