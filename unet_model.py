@@ -509,7 +509,9 @@ def detect_targets(
         return []
 
     mask = result_arr > threshold
-    labeled, _ = ndimage.label(mask)
+    labeled, num_features = ndimage.label(mask)
+    if num_features == 0:
+        return []
     objects = ndimage.find_objects(labeled)
 
     targets: List[Dict[str, object]] = []
@@ -525,8 +527,8 @@ def detect_targets(
         if w <= 0 or h <= 0:
             continue
 
-        blob_vals = result_arr[y_slice, x_slice]
-        confidence = float(np.clip(blob_vals.mean(), 0.0, 1.0))
+        blob_region = result_arr[y_slice, x_slice]
+        confidence = float(np.clip(blob_region.mean(), 0.0, 1.0))
 
         spec_crop = spectrogram_arr[y_slice, x_slice]
         mean_intensity = float(spec_crop.mean()) if spec_crop.size else 0.0

@@ -929,6 +929,14 @@ const TARGET_COLORS = {
   "SHIPWRECK": "#9b30ff",
   "BIOLOGICAL": "#ffaa00",
 };
+const TARGET_TEXT_MARGIN = 6;
+const TARGET_MIN_TEXT_Y = 4;
+const TARGET_TEXT_LIFT = 2;
+
+function mapTargetY(y, h, mapHeight, scaleY) {
+  // Map frequency-indexed Y (0 = low freq bottom) to canvas Y (0 = top).
+  return (mapHeight - (y + h)) * scaleY;
+}
 
 function drawTargets(targets, canvas, ctx, mapWidth, mapHeight) {
   if (!Array.isArray(targets) || targets.length === 0) return;
@@ -946,7 +954,7 @@ function drawTargets(targets, canvas, ctx, mapWidth, mapHeight) {
     const x = (t.x ?? 0) * scaleX;
     const w = (t.w ?? 0) * scaleX;
     const h = (t.h ?? 0) * scaleY;
-    const y = (mapHeight - ((t.y ?? 0) + (t.h ?? 0))) * scaleY;
+    const y = mapTargetY(t.y ?? 0, t.h ?? 0, mapHeight, scaleY);
     if (w <= 0 || h <= 0) return;
 
     ctx.strokeStyle = color;
@@ -966,8 +974,8 @@ function drawTargets(targets, canvas, ctx, mapWidth, mapHeight) {
       ? `${Math.round(t.confidence * 100)}%`
       : "—";
     const label = `${t.label} ${conf}`;
-    const textX = Math.min(canvas.width - 6, x + w + 6);
-    const textY = Math.max(4, y - 2);
+    const textX = Math.min(canvas.width - TARGET_TEXT_MARGIN, x + w + TARGET_TEXT_MARGIN);
+    const textY = Math.max(TARGET_MIN_TEXT_Y, y - TARGET_TEXT_LIFT);
     ctx.fillStyle = color;
     ctx.shadowBlur = 0;
     ctx.fillText(label, textX, textY);
