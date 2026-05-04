@@ -249,6 +249,7 @@ async function executeScan(sonarFile = null, requesterId = null) {
       timestamp:      state.lastScanTime,
       spectrogram:    preprocessResult.spectrogram,    // raw acoustic heatmap
       structural_map: inferenceResult.structural_map,  // ML output
+      targets:        inferenceResult.targets || [],
       meta: {
         ...preprocessResult.meta,
         preprocessMs,
