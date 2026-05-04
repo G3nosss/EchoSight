@@ -15,7 +15,7 @@ COPY package*.json ./
 COPY requirements.txt ./
 
 # Install Python and Node dependencies
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt --extra-index-url https://download.pytorch.org/whl/cpu
 RUN npm install
 
 # Copy the rest of the project
