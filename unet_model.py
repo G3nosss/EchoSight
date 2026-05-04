@@ -476,16 +476,20 @@ def infer_onnx(onnx_path: str, spectrogram: list) -> list:
 
 # ── ATR Post-Processing ─────────────────────────────────────────────────────────
 
+METAL_THRESHOLD = 0.75
+SHIPWRECK_THRESHOLD = 0.62
+ROCK_THRESHOLD = 0.48
+
 def classify_material(mean_intensity: float) -> str:
     """
     Heuristic material classifier based on mean spectrogram intensity.
     Thresholds are tuned for normalized [0,1] spectrograms.
     """
-    if mean_intensity >= 0.75:
+    if mean_intensity >= METAL_THRESHOLD:
         return "METAL (LANDMINE)"
-    if mean_intensity >= 0.62:
+    if mean_intensity >= SHIPWRECK_THRESHOLD:
         return "SHIPWRECK"
-    if mean_intensity >= 0.48:
+    if mean_intensity >= ROCK_THRESHOLD:
         return "ROCK"
     return "BIOLOGICAL"
 
@@ -502,7 +506,7 @@ def detect_targets(
     try:
         from scipy import ndimage
     except ImportError:
-        print("Install scipy: pip install scipy", file=sys.stderr)
+        print("scipy required for target detection. Install with: pip install scipy", file=sys.stderr)
         return []
 
     if result_arr.ndim != 2 or spectrogram_arr.ndim != 2:

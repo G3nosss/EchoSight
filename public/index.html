@@ -974,7 +974,12 @@ function drawTargets(targets, canvas, ctx, mapWidth, mapHeight) {
       ? `${Math.round(t.confidence * 100)}%`
       : "—";
     const label = `${t.label} ${conf}`;
-    const textX = Math.min(canvas.width - TARGET_TEXT_MARGIN, x + w + TARGET_TEXT_MARGIN);
+    const labelWidth = ctx.measureText(label).width;
+    // Position label to the right of the box, clamped inside the canvas.
+    const textX = Math.max(
+      TARGET_TEXT_MARGIN,
+      Math.min(canvas.width - TARGET_TEXT_MARGIN - labelWidth, x + w + TARGET_TEXT_MARGIN)
+    );
     const textY = Math.max(TARGET_MIN_TEXT_Y, y - TARGET_TEXT_LIFT);
     ctx.fillStyle = color;
     ctx.shadowBlur = 0;
