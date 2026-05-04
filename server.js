@@ -31,7 +31,7 @@ const fs         = require("fs");
 // ── Config ────────────────────────────────────────────────────────────────────
 
 const CONFIG = {
-  port:          3000,
+  port:         process.env.PORT || 3000,
   python:        "python3",               // or 'python' on some Termux installs
 
   // Paths relative to this file's directory
