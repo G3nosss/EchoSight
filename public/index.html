@@ -1,0 +1,1197 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
+  <title>EchoSight — Neural Radar</title>
+  <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+  <style>
+    /* ── Design Tokens ──────────────────────────────────────────────────── */
+    :root {
+      /* Color System */
+      --void:          #010409;        /* deep black background */
+      --surface-0:     #0a0d14;
+      --surface-1:     #0f1520;
+      --surface-2:     #141c2e;
+      --border-dim:    rgba(0, 255, 136, 0.08);
+      --border-glow:   rgba(0, 255, 136, 0.3);
+
+      /* Neons */
+      --neon-green:    #00ff88;
+      --neon-green-2:  #00cc6a;
+      --neon-cyan:     #00d4ff;
+      --cyber-purple:  #9b30ff;
+      --cyber-pink:    #ff2d78;
+      --amber-warn:    #ffaa00;
+      --red-alert:     #ff3355;
+
+      /* Glassmorphism */
+      --glass-bg:      rgba(15, 21, 32, 0.65);
+      --glass-border:  rgba(0, 255, 136, 0.12);
+      --glass-blur:    16px;
+
+      /* Typography */
+      --font-mono:     'Courier New', 'Consolas', monospace;
+      --font-ui:       'Courier New', monospace;
+
+      /* Waterfall Color Map (heat: low → high intensity) */
+      --heat-0:        #010409;        /* noise floor */
+      --heat-1:        #0a1f1a;
+      --heat-2:        #0d3d2b;
+      --heat-3:        #1a5c3a;
+      --heat-4:        #007744;
+      --heat-5:        #00aa55;
+      --heat-6:        #00ff88;        /* target return */
+      --heat-7:        #66ffaa;
+      --heat-8:        #aaffdd;
+      --heat-9:        #ffffff;        /* peak return */
+    }
+
+    /* ── Reset & Base ──────────────────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    html, body {
+      width: 100%; height: 100%;
+      background: var(--void);
+      color: var(--neon-green);
+      font-family: var(--font-mono);
+      font-size: 11px;
+      overflow: hidden;
+      user-select: none;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* Scanline overlay */
+    body::before {
+      content: '';
+      position: fixed; inset: 0;
+      background: repeating-linear-gradient(
+        0deg,
+        transparent,
+        transparent 2px,
+        rgba(0,0,0,0.08) 2px,
+        rgba(0,0,0,0.08) 4px
+      );
+      pointer-events: none;
+      z-index: 9999;
+    }
+
+    /* Subtle vignette */
+    body::after {
+      content: '';
+      position: fixed; inset: 0;
+      background: radial-gradient(
+        ellipse at center,
+        transparent 60%,
+        rgba(0, 0, 0, 0.6) 100%
+      );
+      pointer-events: none;
+      z-index: 9998;
+    }
+
+    /* ── Layout ─────────────────────────────────────────────────────────── */
+    .root {
+      display: grid;
+      grid-template-rows: 44px 1fr 28px;
+      grid-template-columns: 1fr 220px;
+      grid-template-areas:
+        "header  header"
+        "main    sidebar"
+        "footer  footer";
+      width: 100vw;
+      height: 100vh;
+      gap: 6px;
+      padding: 6px;
+    }
+
+    /* ── Glassmorphism Card ─────────────────────────────────────────────── */
+    .glass {
+      background: var(--glass-bg);
+      border: 1px solid var(--glass-border);
+      border-radius: 6px;
+      backdrop-filter: blur(var(--glass-blur));
+      -webkit-backdrop-filter: blur(var(--glass-blur));
+      overflow: hidden;
+    }
+
+    .glass--glow {
+      box-shadow:
+        0 0 12px rgba(0, 255, 136, 0.08),
+        inset 0 0 24px rgba(0, 255, 136, 0.03);
+    }
+
+    /* ── Header ─────────────────────────────────────────────────────────── */
+    header {
+      grid-area: header;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 14px;
+    }
+
+    .header__brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .header__logo {
+      font-size: 15px;
+      font-weight: 700;
+      letter-spacing: 0.25em;
+      color: var(--neon-green);
+      text-shadow: 0 0 20px var(--neon-green);
+    }
+
+    .header__logo span {
+      color: var(--cyber-purple);
+      text-shadow: 0 0 16px var(--cyber-purple);
+    }
+
+    .header__subtitle {
+      font-size: 9px;
+      color: rgba(0, 255, 136, 0.45);
+      letter-spacing: 0.2em;
+      text-transform: uppercase;
+    }
+
+    .header__status {
+      display: flex;
+      align-items: center;
+      gap: 20px;
+    }
+
+    .status-dot {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 10px;
+      color: rgba(0, 255, 136, 0.6);
+    }
+
+    .status-dot__led {
+      width: 7px; height: 7px;
+      border-radius: 50%;
+      background: var(--neon-green);
+      box-shadow: 0 0 8px var(--neon-green);
+      animation: pulse-led 2s ease-in-out infinite;
+    }
+
+    .status-dot__led--offline { background: #444; box-shadow: none; animation: none; }
+    .status-dot__led--scan    { background: var(--cyber-purple); box-shadow: 0 0 10px var(--cyber-purple); animation: pulse-fast 0.5s ease-in-out infinite; }
+    .status-dot__led--warn    { background: var(--amber-warn); box-shadow: 0 0 8px var(--amber-warn); }
+    .status-dot__led--error   { background: var(--red-alert); box-shadow: 0 0 8px var(--red-alert); animation: pulse-fast 1s ease-in-out infinite; }
+
+    @keyframes pulse-led {
+      0%, 100% { opacity: 1; }
+      50%       { opacity: 0.4; }
+    }
+    @keyframes pulse-fast {
+      0%, 100% { opacity: 1; }
+      50%       { opacity: 0.2; }
+    }
+
+    .header__clock {
+      font-size: 11px;
+      color: rgba(0, 255, 136, 0.5);
+      letter-spacing: 0.1em;
+    }
+
+    /* ── Main Canvas Area ───────────────────────────────────────────────── */
+    main {
+      grid-area: main;
+      display: grid;
+      grid-template-rows: 1fr 1fr;
+      gap: 6px;
+    }
+
+    .panel {
+      position: relative;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .panel__label {
+      position: absolute;
+      top: 8px; left: 12px;
+      font-size: 9px;
+      letter-spacing: 0.2em;
+      color: rgba(0, 255, 136, 0.5);
+      text-transform: uppercase;
+      z-index: 10;
+    }
+
+    .panel__label--right {
+      left: auto;
+      right: 12px;
+    }
+
+    canvas {
+      width: 100%;
+      height: 100%;
+      display: block;
+    }
+
+    /* Sweep overlay line */
+    #sweepLine {
+      position: absolute;
+      top: 0; bottom: 0;
+      width: 2px;
+      background: linear-gradient(
+        to bottom,
+        transparent,
+        var(--neon-green) 40%,
+        var(--neon-green) 60%,
+        transparent
+      );
+      opacity: 0.8;
+      pointer-events: none;
+      box-shadow: 0 0 8px var(--neon-green);
+    }
+
+    /* Frequency axis labels */
+    .freq-axis {
+      position: absolute;
+      left: 0; top: 24px; bottom: 4px;
+      width: 30px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      padding: 0 4px;
+      pointer-events: none;
+    }
+
+    .freq-axis span {
+      font-size: 8px;
+      color: rgba(0, 255, 136, 0.3);
+      line-height: 1;
+    }
+
+    /* ── Sidebar ─────────────────────────────────────────────────────────── */
+    aside {
+      grid-area: sidebar;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      overflow-y: auto;
+      scrollbar-width: none;
+    }
+    aside::-webkit-scrollbar { display: none; }
+
+    .widget {
+      padding: 12px;
+    }
+
+    .widget__title {
+      font-size: 8px;
+      letter-spacing: 0.25em;
+      color: rgba(0, 255, 136, 0.45);
+      text-transform: uppercase;
+      border-bottom: 1px solid var(--border-dim);
+      padding-bottom: 6px;
+      margin-bottom: 10px;
+    }
+
+    /* Metric rows */
+    .metric {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      margin-bottom: 8px;
+    }
+
+    .metric__label {
+      font-size: 9px;
+      color: rgba(0, 255, 136, 0.45);
+    }
+
+    .metric__value {
+      font-size: 12px;
+      color: var(--neon-green);
+      text-shadow: 0 0 8px rgba(0, 255, 136, 0.4);
+      letter-spacing: 0.05em;
+    }
+
+    .metric__value--purple { color: var(--cyber-purple); text-shadow: 0 0 8px rgba(155, 48, 255, 0.4); }
+    .metric__value--cyan   { color: var(--neon-cyan);    text-shadow: 0 0 8px rgba(0, 212, 255, 0.4); }
+    .metric__value--amber  { color: var(--amber-warn);   text-shadow: 0 0 8px rgba(255, 170, 0, 0.4); }
+    .metric__value--red    { color: var(--red-alert);    text-shadow: 0 0 8px rgba(255, 51, 85, 0.4); }
+
+    /* Mini bar indicator */
+    .bar-row {
+      margin-bottom: 8px;
+    }
+
+    .bar-row__header {
+      display: flex;
+      justify-content: space-between;
+      margin-bottom: 3px;
+    }
+
+    .bar-track {
+      height: 4px;
+      background: rgba(0, 255, 136, 0.08);
+      border-radius: 2px;
+      overflow: hidden;
+    }
+
+    .bar-fill {
+      height: 100%;
+      background: linear-gradient(90deg, var(--neon-green-2), var(--neon-green));
+      border-radius: 2px;
+      transition: width 0.4s ease;
+      box-shadow: 0 0 6px var(--neon-green);
+    }
+
+    .bar-fill--purple {
+      background: linear-gradient(90deg, #6600cc, var(--cyber-purple));
+      box-shadow: 0 0 6px var(--cyber-purple);
+    }
+
+    /* Control Buttons */
+    .btn {
+      width: 100%;
+      padding: 8px 12px;
+      background: rgba(0, 255, 136, 0.06);
+      border: 1px solid rgba(0, 255, 136, 0.2);
+      border-radius: 4px;
+      color: var(--neon-green);
+      font-family: var(--font-mono);
+      font-size: 10px;
+      letter-spacing: 0.15em;
+      text-transform: uppercase;
+      cursor: pointer;
+      transition: all 0.15s ease;
+      margin-bottom: 6px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+    }
+
+    .btn:hover {
+      background: rgba(0, 255, 136, 0.15);
+      border-color: var(--neon-green);
+      box-shadow: 0 0 12px rgba(0, 255, 136, 0.2);
+    }
+
+    .btn:active {
+      transform: scale(0.97);
+      background: rgba(0, 255, 136, 0.25);
+    }
+
+    .btn--scanning {
+      background: rgba(155, 48, 255, 0.15);
+      border-color: var(--cyber-purple);
+      color: var(--cyber-purple);
+      animation: scan-pulse 1s ease-in-out infinite;
+    }
+
+    .btn--danger {
+      border-color: rgba(255, 51, 85, 0.3);
+      color: var(--red-alert);
+    }
+
+    .btn--danger:hover {
+      background: rgba(255, 51, 85, 0.15);
+      border-color: var(--red-alert);
+      box-shadow: 0 0 12px rgba(255, 51, 85, 0.2);
+    }
+
+    @keyframes scan-pulse {
+      0%, 100% { box-shadow: 0 0 8px rgba(155, 48, 255, 0.3); }
+      50%       { box-shadow: 0 0 20px rgba(155, 48, 255, 0.6); }
+    }
+
+    /* Mode selector */
+    .mode-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 4px;
+      margin-bottom: 8px;
+    }
+
+    .mode-btn {
+      padding: 5px;
+      background: rgba(0, 255, 136, 0.04);
+      border: 1px solid rgba(0, 255, 136, 0.12);
+      border-radius: 3px;
+      color: rgba(0, 255, 136, 0.45);
+      font-family: var(--font-mono);
+      font-size: 8px;
+      letter-spacing: 0.1em;
+      text-align: center;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+
+    .mode-btn.active {
+      background: rgba(0, 255, 136, 0.12);
+      border-color: var(--neon-green);
+      color: var(--neon-green);
+      box-shadow: 0 0 6px rgba(0, 255, 136, 0.15);
+    }
+
+    /* Color legend */
+    .legend {
+      display: flex;
+      gap: 3px;
+      height: 10px;
+      border-radius: 2px;
+      overflow: hidden;
+      margin-top: 6px;
+    }
+
+    .legend__seg {
+      flex: 1;
+      height: 100%;
+    }
+
+    /* Log terminal */
+    .log-box {
+      background: rgba(0,0,0,0.4);
+      border: 1px solid var(--border-dim);
+      border-radius: 3px;
+      padding: 6px;
+      height: 90px;
+      overflow-y: auto;
+      scrollbar-width: thin;
+      scrollbar-color: rgba(0,255,136,0.2) transparent;
+    }
+
+    .log-line {
+      font-size: 8px;
+      line-height: 1.6;
+      color: rgba(0, 255, 136, 0.5);
+      border-bottom: 1px solid rgba(0,255,136,0.03);
+    }
+
+    .log-line--error { color: var(--red-alert); opacity: 0.8; }
+    .log-line--warn  { color: var(--amber-warn); opacity: 0.8; }
+    .log-line--ok    { color: var(--neon-green); }
+
+    /* Target markers overlay */
+    #targetOverlay {
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+    }
+
+    .target-marker {
+      position: absolute;
+      border: 1px solid var(--neon-cyan);
+      border-radius: 50%;
+      animation: target-ping 1.5s ease-out forwards;
+      box-shadow: 0 0 6px var(--neon-cyan);
+    }
+
+    @keyframes target-ping {
+      0%   { transform: translate(-50%, -50%) scale(0.5); opacity: 1; }
+      100% { transform: translate(-50%, -50%) scale(2.5); opacity: 0; }
+    }
+
+    /* ── Footer ─────────────────────────────────────────────────────────── */
+    footer {
+      grid-area: footer;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 14px;
+    }
+
+    .footer__left, .footer__right {
+      display: flex;
+      gap: 20px;
+    }
+
+    .footer__item {
+      font-size: 8px;
+      color: rgba(0, 255, 136, 0.3);
+      letter-spacing: 0.15em;
+    }
+
+    .footer__item span {
+      color: rgba(0, 255, 136, 0.6);
+    }
+
+    /* ── Responsive Mobile ──────────────────────────────────────────────── */
+    @media (max-width: 600px) {
+      .root {
+        grid-template-columns: 1fr;
+        grid-template-rows: 40px 1fr 1fr 28px;
+        grid-template-areas:
+          "header"
+          "main"
+          "sidebar"
+          "footer";
+      }
+
+      aside {
+        flex-direction: row;
+        flex-wrap: nowrap;
+        overflow-x: auto;
+      }
+
+      .widget { min-width: 160px; }
+    }
+  </style>
+</head>
+<body>
+
+<div class="root">
+
+  <!-- ── Header ────────────────────────────────────────────────────────── -->
+  <header class="glass">
+    <div class="header__brand">
+      <div>
+        <div class="header__logo">ECHO<span>SIGHT</span></div>
+        <div class="header__subtitle">Neural Acoustic Radar · Sovereign AI OS</div>
+      </div>
+    </div>
+    <div class="header__status">
+      <div class="status-dot">
+        <div class="status-dot__led status-dot__led--offline" id="wsLed"></div>
+        <span id="wsStatus">OFFLINE</span>
+      </div>
+      <div class="status-dot">
+        <div class="status-dot__led status-dot__led--offline" id="scanLed"></div>
+        <span id="scanStatus">IDLE</span>
+      </div>
+      <div class="header__clock" id="clock">--:--:--</div>
+    </div>
+  </header>
+
+  <!-- ── Main Display ──────────────────────────────────────────────────── -->
+  <main>
+    <!-- Waterfall Display (raw spectrogram) -->
+    <div class="glass glass--glow panel" id="waterfallPanel">
+      <div class="panel__label">ACOUSTIC INPUT — WATERFALL</div>
+      <div class="panel__label panel__label--right" id="wfLabel">128 × 256</div>
+      <canvas id="waterfallCanvas"></canvas>
+      <div id="sweepLine"></div>
+      <div id="targetOverlay"></div>
+      <div class="freq-axis">
+        <span>HI</span>
+        <span>MID</span>
+        <span>LO</span>
+      </div>
+    </div>
+
+    <!-- Structural Output (ML inference) -->
+    <div class="glass glass--glow panel" id="structuralPanel">
+      <div class="panel__label">STRUCTURAL OUTPUT — INFERENCE</div>
+      <div class="panel__label panel__label--right" id="inLabel">PASSTHROUGH</div>
+      <canvas id="structuralCanvas"></canvas>
+    </div>
+  </main>
+
+  <!-- ── Sidebar ───────────────────────────────────────────────────────── -->
+  <aside>
+    <!-- Controls -->
+    <div class="glass widget">
+      <div class="widget__title">Control</div>
+      <button class="btn" id="scanBtn" onclick="requestScan()">
+        ◉ INITIATE SCAN
+      </button>
+      <div class="mode-grid">
+        <div class="mode-btn active" onclick="setView('waterfall')" id="modeWf">WATERFALL</div>
+        <div class="mode-btn" onclick="setView('combined')"  id="modeCb">COMBINED</div>
+        <div class="mode-btn" onclick="toggleAuto()"  id="modeAuto">AUTO OFF</div>
+        <div class="mode-btn" onclick="clearDisplay()" id="modeClear">CLEAR</div>
+      </div>
+    </div>
+
+    <!-- Live Metrics -->
+    <div class="glass widget">
+      <div class="widget__title">Signal Metrics</div>
+
+      <div class="bar-row">
+        <div class="bar-row__header">
+          <span class="metric__label">SNR</span>
+          <span class="metric__value" id="mSnr">—</span>
+        </div>
+        <div class="bar-track"><div class="bar-fill" id="barSnr" style="width:0%"></div></div>
+      </div>
+
+      <div class="bar-row">
+        <div class="bar-row__header">
+          <span class="metric__label">PEAK RETURN</span>
+          <span class="metric__value metric__value--cyan" id="mPeak">—</span>
+        </div>
+        <div class="bar-track"><div class="bar-fill bar-fill--purple" id="barPeak" style="width:0%"></div></div>
+      </div>
+
+      <div class="metric">
+        <span class="metric__label">NOISE FLOOR</span>
+        <span class="metric__value metric__value--amber" id="mNoise">—</span>
+      </div>
+
+      <div class="metric">
+        <span class="metric__label">TARGETS</span>
+        <span class="metric__value metric__value--purple" id="mTargets">—</span>
+      </div>
+
+      <div class="metric">
+        <span class="metric__label">DURATION</span>
+        <span class="metric__value" id="mDuration">—</span>
+      </div>
+    </div>
+
+    <!-- Performance -->
+    <div class="glass widget">
+      <div class="widget__title">Pipeline Timing</div>
+
+      <div class="metric">
+        <span class="metric__label">PRE-PROCESS</span>
+        <span class="metric__value" id="tPreprocess">—</span>
+      </div>
+
+      <div class="metric">
+        <span class="metric__label">INFERENCE</span>
+        <span class="metric__value metric__value--cyan" id="tInference">—</span>
+      </div>
+
+      <div class="metric">
+        <span class="metric__label">TOTAL RTT</span>
+        <span class="metric__value metric__value--purple" id="tTotal">—</span>
+      </div>
+
+      <div class="metric">
+        <span class="metric__label">SCAN #</span>
+        <span class="metric__value" id="mScanNum">0</span>
+      </div>
+    </div>
+
+    <!-- Color Legend -->
+    <div class="glass widget">
+      <div class="widget__title">Intensity Map</div>
+      <div class="metric">
+        <span class="metric__label">LOW RETURN</span>
+        <span class="metric__label">HIGH RETURN</span>
+      </div>
+      <div class="legend" id="colorLegend">
+        <!-- Filled by JS -->
+      </div>
+    </div>
+
+    <!-- Event Log -->
+    <div class="glass widget">
+      <div class="widget__title">System Log</div>
+      <div class="log-box" id="logBox"></div>
+    </div>
+  </aside>
+
+  <!-- ── Footer ────────────────────────────────────────────────────────── -->
+  <footer class="glass">
+    <div class="footer__left">
+      <span class="footer__item">ECHOSIGHT <span>v0.1.0</span></span>
+      <span class="footer__item">HOST <span id="footerHost">localhost:3000</span></span>
+      <span class="footer__item">MODE <span id="footerMode">PASSTHROUGH</span></span>
+    </div>
+    <div class="footer__right">
+      <span class="footer__item">CLIENTS <span id="footerClients">0</span></span>
+      <span class="footer__item">SOVEREIGN LOCAL AI OS · AR3S</span>
+    </div>
+  </footer>
+
+</div>
+
+<script>
+"use strict";
+
+// ── State ────────────────────────────────────────────────────────────────────
+const STATE = {
+  connected:    false,
+  scanning:     false,
+  autoMode:     false,
+  autoInterval: null,
+  scanCount:    0,
+  viewMode:     "waterfall",
+  lastMeta:     null,
+  waterfallHistory: [],   // rolling ring buffer of spectrogram columns
+  historyMaxCols: 256,    // how many time columns to show in waterfall
+};
+
+// ── Canvas Setup ─────────────────────────────────────────────────────────────
+const wfCanvas  = document.getElementById("waterfallCanvas");
+const stCanvas  = document.getElementById("structuralCanvas");
+const wfCtx     = wfCanvas.getContext("2d");
+const stCtx     = stCanvas.getContext("2d");
+
+function resizeCanvases() {
+  const wfPanel = document.getElementById("waterfallPanel");
+  const stPanel = document.getElementById("structuralPanel");
+  wfCanvas.width  = wfPanel.clientWidth;
+  wfCanvas.height = wfPanel.clientHeight;
+  stCanvas.width  = stPanel.clientWidth;
+  stCanvas.height = stPanel.clientHeight;
+}
+resizeCanvases();
+window.addEventListener("resize", resizeCanvases);
+
+// ── Color Palette ─────────────────────────────────────────────────────────────
+// Maps [0,1] intensity to RGBA cyberpunk palette
+// Low: deep void → Mid: cyber-purple → High: neon-green → Peak: white-green
+const COLOR_STOPS = [
+  [0.00, [  1,  4,  9, 255]],   // void black
+  [0.10, [ 10, 20, 35, 255]],   // dark surface
+  [0.25, [ 30, 10, 80, 255]],   // deep purple
+  [0.40, [100, 20,180, 255]],   // cyber purple
+  [0.55, [  0,150, 90, 255]],   // dark green
+  [0.70, [  0,220,120, 255]],   // neon green
+  [0.85, [ 80,255,180, 255]],   // bright green
+  [1.00, [220,255,240, 255]],   // near-white peak
+];
+
+function sampleColorMap(t) {
+  t = Math.max(0, Math.min(1, t));
+  for (let i = 1; i < COLOR_STOPS.length; i++) {
+    const [t1, c1] = COLOR_STOPS[i - 1];
+    const [t2, c2] = COLOR_STOPS[i];
+    if (t <= t2) {
+      const f = (t - t1) / (t2 - t1);
+      return [
+        Math.round(c1[0] + (c2[0] - c1[0]) * f),
+        Math.round(c1[1] + (c2[1] - c1[1]) * f),
+        Math.round(c1[2] + (c2[2] - c1[2]) * f),
+        255,
+      ];
+    }
+  }
+  return COLOR_STOPS[COLOR_STOPS.length - 1][1];
+}
+
+// Populate legend bar
+(function buildLegend() {
+  const legend = document.getElementById("colorLegend");
+  legend.innerHTML = "";
+  for (let i = 0; i <= 20; i++) {
+    const t   = i / 20;
+    const [r,g,b] = sampleColorMap(t);
+    const seg = document.createElement("div");
+    seg.className  = "legend__seg";
+    seg.style.background = `rgb(${r},${g},${b})`;
+    legend.appendChild(seg);
+  }
+})();
+
+// ── Waterfall Renderer ───────────────────────────────────────────────────────
+/**
+ * Renders a 2D spectrogram as a scrolling waterfall.
+ * Each scan adds new column(s) on the right; old data scrolls left.
+ *
+ * spectrogram: float[][] shape (freqBins × timeFrames)
+ *              Each column is one time frame; each row is a freq bin.
+ */
+function renderWaterfall(spectrogram) {
+  const H = wfCanvas.height;
+  const W = wfCanvas.width;
+  const freqBins  = spectrogram.length;
+  const timeFrames = spectrogram[0].length;
+
+  // Create ImageData for the full canvas
+  const imageData = wfCtx.createImageData(W, H);
+  const data      = imageData.data;  // RGBA flat array
+
+  // Map spectrogram 2D → canvas pixels
+  // spectrogram[freq][time] → pixel at (x=time, y=freq)
+  // freq axis is inverted: high freq at top
+  for (let py = 0; py < H; py++) {
+    const freqIdx = Math.floor(((H - 1 - py) / H) * freqBins);  // invert Y
+    if (freqIdx >= freqBins) continue;
+
+    for (let px = 0; px < W; px++) {
+      const timeIdx = Math.floor((px / W) * timeFrames);
+      if (timeIdx >= timeFrames) continue;
+
+      const intensity = spectrogram[freqIdx][timeIdx];
+      const [r, g, b, a] = sampleColorMap(intensity);
+
+      const idx = (py * W + px) * 4;
+      data[idx + 0] = r;
+      data[idx + 1] = g;
+      data[idx + 2] = b;
+      data[idx + 3] = a;
+    }
+  }
+
+  wfCtx.putImageData(imageData, 0, 0);
+
+  // Draw grid overlay
+  drawGrid(wfCtx, W, H);
+
+  // Draw sweep line at current time position
+  moveSweepLine(W);
+}
+
+// ── Structural Map Renderer ───────────────────────────────────────────────────
+function renderStructural(structMap) {
+  const H = stCanvas.height;
+  const W = stCanvas.width;
+  const freqBins   = structMap.length;
+  const timeFrames = structMap[0].length;
+
+  const imageData = stCtx.createImageData(W, H);
+  const data      = imageData.data;
+
+  // Use a different palette for structural output:
+  // Black background, neon green/cyan for structure boundaries
+  for (let py = 0; py < H; py++) {
+    const freqIdx = Math.floor(((H - 1 - py) / H) * freqBins);
+    if (freqIdx >= freqBins) continue;
+
+    for (let px = 0; px < W; px++) {
+      const timeIdx = Math.floor((px / W) * timeFrames);
+      if (timeIdx >= timeFrames) continue;
+
+      const v = structMap[freqIdx][timeIdx];
+      const idx = (py * W + px) * 4;
+
+      // Threshold-based: background vs structure
+      if (v > 0.5) {
+        // High confidence structure — bright cyan/green
+        const intensity = (v - 0.5) * 2;   // remap [0.5,1] → [0,1]
+        data[idx + 0] = Math.round(intensity * 80);
+        data[idx + 1] = Math.round(80 + intensity * 175);
+        data[idx + 2] = Math.round(intensity * 140);
+        data[idx + 3] = 255;
+      } else {
+        // Background — near-black with purple tint
+        const noise = v * 0.5;
+        data[idx + 0] = Math.round(noise * 30);
+        data[idx + 1] = Math.round(noise * 8);
+        data[idx + 2] = Math.round(noise * 40);
+        data[idx + 3] = 255;
+      }
+    }
+  }
+
+  stCtx.putImageData(imageData, 0, 0);
+
+  // Draw grid
+  drawGrid(stCtx, W, H);
+
+  // Detect and mark high-confidence target clusters
+  markTargets(structMap, stCanvas);
+}
+
+// ── Grid Overlay ──────────────────────────────────────────────────────────────
+function drawGrid(ctx, W, H) {
+  ctx.strokeStyle = "rgba(0, 255, 136, 0.07)";
+  ctx.lineWidth   = 1;
+
+  // Vertical lines every ~64px
+  for (let x = 0; x < W; x += 64) {
+    ctx.beginPath();
+    ctx.moveTo(x, 0);
+    ctx.lineTo(x, H);
+    ctx.stroke();
+  }
+
+  // Horizontal lines
+  for (let y = 0; y < H; y += 32) {
+    ctx.beginPath();
+    ctx.moveTo(0, y);
+    ctx.lineTo(W, y);
+    ctx.stroke();
+  }
+}
+
+// ── Sweep Line Animator ───────────────────────────────────────────────────────
+let sweepX = 0;
+let sweepAnim = null;
+
+function moveSweepLine(totalWidth) {
+  const line = document.getElementById("sweepLine");
+
+  if (sweepAnim) cancelAnimationFrame(sweepAnim);
+
+  let startX = 0;
+  const duration = 1200;  // ms for sweep to cross canvas
+  const startTime = performance.now();
+
+  function animate(now) {
+    const elapsed = now - startTime;
+    const frac    = Math.min(elapsed / duration, 1);
+    sweepX = Math.floor(frac * totalWidth);
+
+    line.style.left = sweepX + "px";
+
+    if (frac < 1) {
+      sweepAnim = requestAnimationFrame(animate);
+    }
+  }
+
+  sweepAnim = requestAnimationFrame(animate);
+}
+
+// ── Target Detection & Markers ────────────────────────────────────────────────
+function markTargets(structMap, canvas) {
+  const overlay = document.getElementById("targetOverlay");
+  overlay.innerHTML = "";
+
+  const freqBins   = structMap.length;
+  const timeFrames = structMap[0].length;
+  const W = canvas.width;
+  const H = canvas.height;
+
+  // Simple blob detection: find local maxima above 0.7
+  const THRESHOLD = 0.72;
+  const MIN_DIST_PX = 30;
+
+  const found = [];
+
+  for (let fi = 2; fi < freqBins - 2; fi++) {
+    for (let ti = 2; ti < timeFrames - 2; ti++) {
+      const v = structMap[fi][ti];
+      if (v < THRESHOLD) continue;
+
+      // Check if local maximum
+      let isMax = true;
+      for (let dfi = -1; dfi <= 1 && isMax; dfi++) {
+        for (let dti = -1; dti <= 1 && isMax; dti++) {
+          if (dfi === 0 && dti === 0) continue;
+          if (structMap[fi + dfi]?.[ti + dti] > v) isMax = false;
+        }
+      }
+
+      if (!isMax) continue;
+
+      const px = Math.round((ti / timeFrames) * W);
+      const py = Math.round(((freqBins - 1 - fi) / freqBins) * H);
+
+      // Distance filter (avoid duplicate markers)
+      const tooClose = found.some(f =>
+        Math.hypot(f.px - px, f.py - py) < MIN_DIST_PX
+      );
+
+      if (!tooClose) {
+        found.push({ px, py, strength: v });
+      }
+    }
+  }
+
+  // Render markers
+  found.forEach(({ px, py, strength }) => {
+    const size = Math.round(8 + strength * 16);
+    const marker = document.createElement("div");
+    marker.className = "target-marker";
+    marker.style.cssText = `
+      left: ${px}px; top: ${py}px;
+      width: ${size}px; height: ${size}px;
+    `;
+    overlay.appendChild(marker);
+  });
+}
+
+// ── Socket.io Client ──────────────────────────────────────────────────────────
+const socket = io("http://localhost:3000", {
+  reconnection:        true,
+  reconnectionDelay:   1000,
+  reconnectionAttempts: Infinity,
+  timeout:             5000,
+});
+
+socket.on("connect", () => {
+  STATE.connected = true;
+  setLed("wsLed",     "");
+  setLed("wsStatus",  "ONLINE",   "wsLed");
+  document.getElementById("wsStatus").textContent = "ONLINE";
+  log("WebSocket connected: " + socket.id, "ok");
+});
+
+socket.on("disconnect", () => {
+  STATE.connected = false;
+  document.getElementById("wsLed").className    = "status-dot__led status-dot__led--offline";
+  document.getElementById("wsStatus").textContent = "OFFLINE";
+  log("WebSocket disconnected", "warn");
+});
+
+socket.on("connect_error", (err) => {
+  log("Connection error: " + err.message, "error");
+});
+
+socket.on("server:state", (data) => {
+  STATE.scanCount = data.scanCount || 0;
+  document.getElementById("mScanNum").textContent  = STATE.scanCount;
+  document.getElementById("footerMode").textContent = (data.inferenceMode || "—").toUpperCase();
+  document.getElementById("inLabel").textContent    = (data.inferenceMode || "—").toUpperCase();
+  log(`Server state: mode=${data.inferenceMode} scans=${data.scanCount}`, "ok");
+});
+
+socket.on("scan:start", (data) => {
+  STATE.scanning = true;
+  setScanState(true);
+  log(`Scan started: ${data.scanId}`, "ok");
+});
+
+socket.on("scan:status", (data) => {
+  log(`[${data.scanId}] ${data.stage} (${data.progress}%)`, "");
+});
+
+socket.on("scan:complete", (payload) => {
+  STATE.scanning = false;
+  STATE.scanCount++;
+  STATE.lastMeta = payload.meta;
+
+  setScanState(false);
+
+  // Render canvases
+  if (payload.spectrogram)    renderWaterfall(payload.spectrogram);
+  if (payload.structural_map) renderStructural(payload.structural_map);
+
+  // Update metrics
+  updateMetrics(payload.meta);
+
+  log(`Scan #${payload.meta.scanNumber} complete — ${payload.meta.totalMs}ms`, "ok");
+});
+
+socket.on("scan:error", (err) => {
+  STATE.scanning = false;
+  setScanState(false);
+  setLed("scanLed", "error");
+  log("ERROR: " + err.message, "error");
+  document.getElementById("scanLed").className = "status-dot__led status-dot__led--error";
+});
+
+socket.on("scan:warn", (w) => log("WARN: " + w.message, "warn"));
+
+// ── UI Helpers ────────────────────────────────────────────────────────────────
+function setScanState(scanning) {
+  const btn = document.getElementById("scanBtn");
+  const led = document.getElementById("scanLed");
+  const txt = document.getElementById("scanStatus");
+
+  if (scanning) {
+    btn.textContent  = "⬡ SCANNING...";
+    btn.className    = "btn btn--scanning";
+    led.className    = "status-dot__led status-dot__led--scan";
+    txt.textContent  = "SCANNING";
+  } else {
+    btn.innerHTML    = "◉ INITIATE SCAN";
+    btn.className    = "btn";
+    led.className    = "status-dot__led";
+    txt.textContent  = "IDLE";
+  }
+}
+
+function updateMetrics(meta) {
+  if (!meta) return;
+
+  const snr     = parseFloat(meta.snr_estimate) || 0;
+  const snrPct  = Math.min(snr / 20, 1) * 100;  // normalize to 20dB max
+  const peakPct = Math.min(Math.abs(meta.peak_db) / 80, 1) * 100;
+
+  document.getElementById("mSnr").textContent      = snr.toFixed(1) + " dB";
+  document.getElementById("mPeak").textContent     = meta.peak_db + " dB";
+  document.getElementById("mNoise").textContent    = meta.noise_db + " dB";
+  document.getElementById("mTargets").textContent  = meta.target_count ?? "—";
+  document.getElementById("mDuration").textContent = meta.duration_s + "s";
+  document.getElementById("tPreprocess").textContent = (meta.preprocessMs ?? "—") + " ms";
+  document.getElementById("tInference").textContent  = (meta.inferenceMs  ?? "—") + " ms";
+  document.getElementById("tTotal").textContent      = (meta.totalMs      ?? "—") + " ms";
+  document.getElementById("mScanNum").textContent    = meta.scanNumber ?? STATE.scanCount;
+  document.getElementById("wfLabel").textContent     = `${meta.freq_bins}×${meta.time_frames}`;
+
+  document.getElementById("barSnr").style.width   = snrPct.toFixed(1)  + "%";
+  document.getElementById("barPeak").style.width  = peakPct.toFixed(1) + "%";
+}
+
+// ── Actions ───────────────────────────────────────────────────────────────────
+function requestScan() {
+  if (!STATE.connected) {
+    log("Not connected to server", "error");
+    return;
+  }
+  if (STATE.scanning) return;
+  socket.emit("scan:request", {});
+}
+
+function toggleAuto() {
+  STATE.autoMode = !STATE.autoMode;
+  const btn = document.getElementById("modeAuto");
+
+  if (STATE.autoMode) {
+    socket.emit("scan:auto", { enabled: true, intervalMs: 3000 });
+    btn.textContent = "AUTO ON";
+    btn.classList.add("active");
+    log("Auto-scan enabled (3s)", "ok");
+  } else {
+    socket.emit("scan:auto", { enabled: false });
+    btn.textContent = "AUTO OFF";
+    btn.classList.remove("active");
+    log("Auto-scan disabled", "warn");
+  }
+}
+
+function clearDisplay() {
+  wfCtx.fillStyle  = "#010409";
+  wfCtx.fillRect(0, 0, wfCanvas.width, wfCanvas.height);
+  stCtx.fillStyle  = "#010409";
+  stCtx.fillRect(0, 0, stCanvas.width, stCanvas.height);
+  document.getElementById("targetOverlay").innerHTML = "";
+  log("Display cleared", "");
+}
+
+function setView(mode) {
+  STATE.viewMode = mode;
+  document.querySelectorAll(".mode-btn").forEach(b => b.classList.remove("active"));
+  document.getElementById("modeWf").classList.toggle("active", mode === "waterfall");
+  document.getElementById("modeCb").classList.toggle("active", mode === "combined");
+}
+
+// ── System Log ────────────────────────────────────────────────────────────────
+function log(msg, type = "") {
+  const box  = document.getElementById("logBox");
+  const line = document.createElement("div");
+  const ts   = new Date().toTimeString().slice(0, 8);
+
+  line.className   = `log-line log-line--${type}`;
+  line.textContent = `[${ts}] ${msg}`;
+
+  box.appendChild(line);
+
+  // Keep max 80 lines
+  while (box.children.length > 80) {
+    box.removeChild(box.firstChild);
+  }
+
+  box.scrollTop = box.scrollHeight;
+}
+
+// ── LED Helpers ───────────────────────────────────────────────────────────────
+function setLed(ledId, state) {
+  const el = document.getElementById(ledId);
+  if (!el) return;
+  el.className = `status-dot__led${state ? " status-dot__led--" + state : ""}`;
+}
+
+// ── Clock ─────────────────────────────────────────────────────────────────────
+function updateClock() {
+  const now = new Date();
+  const hh  = String(now.getHours()).padStart(2, "0");
+  const mm  = String(now.getMinutes()).padStart(2, "0");
+  const ss  = String(now.getSeconds()).padStart(2, "0");
+  document.getElementById("clock").textContent = `${hh}:${mm}:${ss}`;
+}
+setInterval(updateClock, 1000);
+updateClock();
+
+// ── Boot Sequence ─────────────────────────────────────────────────────────────
+(function boot() {
+  clearDisplay();
+  log("EchoSight v0.1.0 initializing...", "");
+  log("Connecting to neural bridge at localhost:3000", "");
+  log("Acoustic preprocessing: scipy STFT", "");
+  log("Inference backend: ONNX Runtime / PyTorch", "");
+  log("Sovereign local AI OS — no cloud dependencies", "ok");
+
+  // Initial clear with boot animation
+  setTimeout(() => {
+    log("Frontend initialized. Awaiting scan trigger.", "ok");
+  }, 800);
+})();
+</script>
+
+</body>
+</html>
