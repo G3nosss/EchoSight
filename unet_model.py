@@ -488,9 +488,9 @@ def classify_material(mean_intensity: float) -> str:
     """
     if mean_intensity >= METAL_THRESHOLD:
         return "METAL (LANDMINE)"
-    if mean_intensity >= SHIPWRECK_THRESHOLD:
+    elif mean_intensity >= SHIPWRECK_THRESHOLD:
         return "SHIPWRECK"
-    if mean_intensity >= ROCK_THRESHOLD:
+    elif mean_intensity >= ROCK_THRESHOLD:
         return "ROCK"
     return "BIOLOGICAL"
 
@@ -507,7 +507,7 @@ def detect_targets(
     try:
         from scipy import ndimage
     except ImportError:
-        print("scipy required for target detection. Install with: pip install scipy, returning no targets.", file=sys.stderr)
+        print("scipy required for target detection. Install with: pip install scipy. Returning no targets.", file=sys.stderr)
         return []
 
     if result_arr.ndim != 2 or spectrogram_arr.ndim != 2:
