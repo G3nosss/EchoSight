@@ -507,7 +507,7 @@ def detect_targets(
     try:
         from scipy import ndimage
     except ImportError:
-        print("scipy required for target detection. Install with: pip install scipy", file=sys.stderr)
+        print("scipy required for target detection. Install with: pip install scipy, returning no targets.", file=sys.stderr)
         return []
 
     if result_arr.ndim != 2 or spectrogram_arr.ndim != 2:
@@ -519,7 +519,7 @@ def detect_targets(
         return []
     objects = ndimage.find_objects(labeled)
 
-    targets: List[Dict[str, object]] = []
+    targets: List[Dict[str, Union[int, str, float]]] = []
     for blob_id, slc in enumerate(objects, start=1):
         if slc is None:
             continue
