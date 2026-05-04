@@ -28,7 +28,7 @@ import sys
 import json
 import argparse
 import numpy as np
-from typing import Optional
+from typing import Optional, List, Dict, Union
 
 import torch
 import torch.nn as nn
@@ -474,6 +474,83 @@ def infer_onnx(onnx_path: str, spectrogram: list) -> list:
     return out[0, 0].tolist()  # (H, W) as list
 
 
+# ── ATR Post-Processing ─────────────────────────────────────────────────────────
+
+# Normalized mean spectrogram intensity thresholds (0-1), tuned on mock data.
+METAL_THRESHOLD = 0.75
+SHIPWRECK_THRESHOLD = 0.62
+ROCK_THRESHOLD = 0.48
+
+def classify_material(mean_intensity: float) -> str:
+    """
+    Heuristic material classifier based on mean spectrogram intensity.
+    Thresholds are tuned for normalized [0,1] spectrograms.
+    """
+    if mean_intensity >= METAL_THRESHOLD:
+        return "METAL (LANDMINE)"
+    elif mean_intensity >= SHIPWRECK_THRESHOLD:
+        return "SHIPWRECK"
+    elif mean_intensity >= ROCK_THRESHOLD:
+        return "ROCK"
+    return "BIOLOGICAL"
+
+
+def detect_targets(
+    result_arr: np.ndarray,
+    spectrogram_arr: np.ndarray,
+    threshold: float = 0.6,
+) -> List[Dict[str, Union[int, str, float]]]:
+    """
+    Detect blobs in the structural map and label them via spectrogram intensity.
+    Returns list of {x, y, w, h, label, confidence}.
+    """
+    try:
+        from scipy import ndimage
+    except ImportError:
+        print("scipy required for target detection. Install with: pip install scipy. Returning no targets.", file=sys.stderr)
+        return []
+
+    if result_arr.ndim != 2 or spectrogram_arr.ndim != 2:
+        return []
+
+    mask = result_arr > threshold
+    labeled, num_features = ndimage.label(mask)
+    if num_features == 0:
+        return []
+    objects = ndimage.find_objects(labeled)
+
+    targets: List[Dict[str, Union[int, str, float]]] = []
+    for blob_id, slc in enumerate(objects, start=1):
+        if slc is None:
+            continue
+
+        y_slice, x_slice = slc  # (freq, time)
+        y0, y1 = y_slice.start, y_slice.stop
+        x0, x1 = x_slice.start, x_slice.stop
+        w = x1 - x0
+        h = y1 - y0
+        if w <= 0 or h <= 0:
+            continue
+
+        blob_region = result_arr[y_slice, x_slice]
+        blob_strength = float(np.clip(blob_region.mean(), 0.0, 1.0))
+
+        spec_crop = spectrogram_arr[y_slice, x_slice]
+        mean_intensity = float(spec_crop.mean()) if spec_crop.size else 0.0
+        label = classify_material(mean_intensity)
+
+        targets.append({
+            "x": int(x0),
+            "y": int(y0),
+            "w": int(w),
+            "h": int(h),
+            "label": label,
+            "confidence": round(blob_strength, 3),
+        })
+
+    return targets
+
+
 # ── CLI Entry Point ───────────────────────────────────────────────────────────
 
 def main():
@@ -512,7 +589,13 @@ def main():
         data = json.loads(sys.stdin.read())
         spec = data.get("spectrogram", data)
         result = model.infer(spec)
-        print(json.dumps({"structural_map": result}, separators=(",", ":")))
+        result_arr = np.array(result, dtype=np.float32)
+        spec_arr = np.array(spec, dtype=np.float32)
+        targets = detect_targets(result_arr, spec_arr, threshold=0.6)
+        print(json.dumps({
+            "structural_map": result,
+            "targets": targets,
+        }, separators=(",", ":")))
     
     else:
         # Quick architecture test

@@ -1,0 +1,23 @@
+# EchoSight — Python dependencies
+# Install: pip install -r requirements.txt
+#
+# Pinned to the minimum safe versions for ARM/Termux edge deployment.
+
+# Core numerics
+numpy>=2.0.2
+
+# Audio pre-processing (STFT, WAV I/O) — used by preprocess.py
+# Intentionally chosen over librosa to avoid numba dependency on ARM.
+scipy>=1.13.1
+
+# Deep learning model (unet_model.py)
+# torch>=2.6.0 required to fix torch.load() RCE via weights_only=True (GHSA-…)
+torch>=2.6.0
+
+# ONNX model export & validation (unet_model.py --export)
+# >=1.21.0 patches multiple path-traversal and supply-chain CVEs
+onnx>=1.21.0
+
+# ONNX runtime inference (unet_model.py --infer, infer_onnx())
+# CPU-only wheel is available for ARM: pip install onnxruntime
+onnxruntime>=1.21.0

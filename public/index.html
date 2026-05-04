@@ -870,9 +870,6 @@ function renderStructural(structMap) {
 
   // Draw grid
   drawGrid(stCtx, W, H);
-
-  // Detect and mark high-confidence target clusters
-  markTargets(structMap, stCanvas);
 }
 
 // ── Grid Overlay ──────────────────────────────────────────────────────────────
@@ -925,63 +922,71 @@ function moveSweepLine(totalWidth) {
   sweepAnim = requestAnimationFrame(animate);
 }
 
-// ── Target Detection & Markers ────────────────────────────────────────────────
-function markTargets(structMap, canvas) {
-  const overlay = document.getElementById("targetOverlay");
-  overlay.innerHTML = "";
+// ── Target Overlays ────────────────────────────────────────────────────────────
+const TARGET_COLORS = {
+  "METAL (LANDMINE)": "#ff3355",
+  "ROCK": "#00d4ff",
+  "SHIPWRECK": "#9b30ff",
+  "BIOLOGICAL": "#ffaa00",
+};
+const TARGET_TEXT_MARGIN = 6;
+const TARGET_MIN_TEXT_Y = 4;
+const TARGET_TEXT_LIFT = 2;
 
-  const freqBins   = structMap.length;
-  const timeFrames = structMap[0].length;
-  const W = canvas.width;
-  const H = canvas.height;
+function mapTargetY(y, h, mapHeight, scaleY) {
+  // Map frequency-indexed Y (0 at bottom, increasing upward) to top-edge canvas Y.
+  return (mapHeight - (y + h)) * scaleY;
+}
 
-  // Simple blob detection: find local maxima above 0.7
-  const THRESHOLD = 0.72;
-  const MIN_DIST_PX = 30;
+function drawTargets(targets, canvas, ctx, mapWidth, mapHeight) {
+  if (!Array.isArray(targets) || targets.length === 0) return;
+  if (!mapWidth || !mapHeight) return;
 
-  const found = [];
+  const scaleX = canvas.width / mapWidth;
+  const scaleY = canvas.height / mapHeight;
 
-  for (let fi = 2; fi < freqBins - 2; fi++) {
-    for (let ti = 2; ti < timeFrames - 2; ti++) {
-      const v = structMap[fi][ti];
-      if (v < THRESHOLD) continue;
+  ctx.save();
+  ctx.font = "10px 'Courier New', monospace";
+  ctx.textBaseline = "top";
 
-      // Check if local maximum
-      let isMax = true;
-      for (let dfi = -1; dfi <= 1 && isMax; dfi++) {
-        for (let dti = -1; dti <= 1 && isMax; dti++) {
-          if (dfi === 0 && dti === 0) continue;
-          if (structMap[fi + dfi]?.[ti + dti] > v) isMax = false;
-        }
-      }
+  targets.forEach((t) => {
+    const color = TARGET_COLORS[t.label] || "#00ff88";
+    const x = (t.x ?? 0) * scaleX;
+    const w = (t.w ?? 0) * scaleX;
+    const h = (t.h ?? 0) * scaleY;
+    const y = mapTargetY(t.y ?? 0, t.h ?? 0, mapHeight, scaleY);
+    if (w <= 0 || h <= 0) return;
 
-      if (!isMax) continue;
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 2;
+    ctx.shadowColor = color;
+    ctx.shadowBlur = 10;
+    ctx.strokeRect(x, y, w, h);
 
-      const px = Math.round((ti / timeFrames) * W);
-      const py = Math.round(((freqBins - 1 - fi) / freqBins) * H);
+    const cx = x + w / 2;
+    const cy = y + h / 2;
+    const r = Math.max(6, Math.min(w, h) * 0.25);
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.stroke();
 
-      // Distance filter (avoid duplicate markers)
-      const tooClose = found.some(f =>
-        Math.hypot(f.px - px, f.py - py) < MIN_DIST_PX
-      );
-
-      if (!tooClose) {
-        found.push({ px, py, strength: v });
-      }
-    }
-  }
-
-  // Render markers
-  found.forEach(({ px, py, strength }) => {
-    const size = Math.round(8 + strength * 16);
-    const marker = document.createElement("div");
-    marker.className = "target-marker";
-    marker.style.cssText = `
-      left: ${px}px; top: ${py}px;
-      width: ${size}px; height: ${size}px;
-    `;
-    overlay.appendChild(marker);
+    const conf = typeof t.confidence === "number"
+      ? `${Math.round(t.confidence * 100)}%`
+      : "—";
+    const label = `${t.label} ${conf}`;
+    const labelWidth = ctx.measureText(label).width;
+    // Position label to the right of the box, clamped inside the canvas.
+    const textX = Math.max(
+      TARGET_TEXT_MARGIN,
+      Math.min(canvas.width - TARGET_TEXT_MARGIN - labelWidth, x + w + TARGET_TEXT_MARGIN)
+    );
+    const textY = Math.max(TARGET_MIN_TEXT_Y, y - TARGET_TEXT_LIFT);
+    ctx.fillStyle = color;
+    ctx.shadowBlur = 0;
+    ctx.fillText(label, textX, textY);
   });
+
+  ctx.restore();
 }
 
 // ── Socket.io Client ──────────────────────────────────────────────────────────
@@ -1039,6 +1044,11 @@ socket.on("scan:complete", (payload) => {
   // Render canvases
   if (payload.spectrogram)    renderWaterfall(payload.spectrogram);
   if (payload.structural_map) renderStructural(payload.structural_map);
+  if (payload.targets && payload.structural_map) {
+    const mapHeight = payload.structural_map.length;
+    const mapWidth  = payload.structural_map[0]?.length || 0;
+    drawTargets(payload.targets, stCanvas, stCtx, mapWidth, mapHeight);
+  }
 
   // Update metrics
   updateMetrics(payload.meta);
