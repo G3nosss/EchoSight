@@ -28,7 +28,7 @@ import sys
 import json
 import argparse
 import numpy as np
-from typing import Optional, List, Dict
+from typing import Optional, List, Dict, Union
 
 import torch
 import torch.nn as nn
@@ -476,6 +476,7 @@ def infer_onnx(onnx_path: str, spectrogram: list) -> list:
 
 # ── ATR Post-Processing ─────────────────────────────────────────────────────────
 
+# Normalized mean spectrogram intensity thresholds (0-1), tuned on mock data.
 METAL_THRESHOLD = 0.75
 SHIPWRECK_THRESHOLD = 0.62
 ROCK_THRESHOLD = 0.48
@@ -498,7 +499,7 @@ def detect_targets(
     result_arr: np.ndarray,
     spectrogram_arr: np.ndarray,
     threshold: float = 0.6,
-) -> List[Dict[str, object]]:
+) -> List[Dict[str, Union[int, str, float]]]:
     """
     Detect blobs in the structural map and label them via spectrogram intensity.
     Returns list of {x, y, w, h, label, confidence}.
@@ -532,7 +533,7 @@ def detect_targets(
             continue
 
         blob_region = result_arr[y_slice, x_slice]
-        confidence = float(np.clip(blob_region.mean(), 0.0, 1.0))
+        blob_strength = float(np.clip(blob_region.mean(), 0.0, 1.0))
 
         spec_crop = spectrogram_arr[y_slice, x_slice]
         mean_intensity = float(spec_crop.mean()) if spec_crop.size else 0.0
@@ -544,7 +545,7 @@ def detect_targets(
             "w": int(w),
             "h": int(h),
             "label": label,
-            "confidence": round(confidence, 3),
+            "confidence": round(blob_strength, 3),
         })
 
     return targets

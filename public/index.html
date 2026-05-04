@@ -934,7 +934,7 @@ const TARGET_MIN_TEXT_Y = 4;
 const TARGET_TEXT_LIFT = 2;
 
 function mapTargetY(y, h, mapHeight, scaleY) {
-  // Map frequency-indexed Y (0 = low freq bottom) to canvas Y (0 = top).
+  // Map frequency-indexed Y (0 = low freq at bottom) to top-edge canvas Y.
   return (mapHeight - (y + h)) * scaleY;
 }
 
