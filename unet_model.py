@@ -566,7 +566,8 @@ def main():
     args = parser.parse_args()
     
     model = EchoSightUNet(base_channels=16, use_attention=True)
-    print(f"[EchoSight] Parameters: {model.count_parameters():,}")
+        print(f"[EchoSight] Parameters: {model.count_parameters():,}", file=sys.stderr)
+
     
     if args.train:
         save_path = train(epochs=args.epochs)
