@@ -990,7 +990,7 @@ function drawTargets(targets, canvas, ctx, mapWidth, mapHeight) {
 }
 
 // ── Socket.io Client ──────────────────────────────────────────────────────────
-const socket = io("http://localhost:3000", {
+const socket = io({
   reconnection:        true,
   reconnectionDelay:   1000,
   reconnectionAttempts: Infinity,
